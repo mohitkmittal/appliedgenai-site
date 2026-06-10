@@ -1,0 +1,83 @@
+---
+# ─────────────────────────────────────────────────────────────
+# RECIPE TEMPLATE — copy this file, rename it (kebab-case .mdx),
+# fill in every field. Files starting with "_" are NOT published.
+# Keep the SAME section order below so every recipe is consistent
+# and instantly adoptable.
+# ─────────────────────────────────────────────────────────────
+title: "Recipe title — verb-first, concrete"
+description: "One sentence: what this gives you and why it matters."
+pubDate: 2026-01-01
+# updatedDate: 2026-02-01
+author: "Mohit Mittal"
+authorUrl: "https://appliedgenai.io/about"
+difficulty: "intermediate"        # beginner | intermediate | advanced
+readingTime: "8 min"
+tags: ["agents", "patterns"]
+stack: ["Python", "Anthropic API"]
+# Inline architecture diagram (Mermaid). Rendered at the top of the recipe.
+diagram: |
+  flowchart LR
+    A[Input] --> B[Step]
+    B --> C[Output]
+diagramAlt: "One-line description of the diagram for accessibility."
+# Or use an image instead of Mermaid:
+# diagramImage: "/diagrams/my-recipe.png"
+code: "https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/example"
+draft: true
+---
+import Mermaid from '../../components/Mermaid.astro';
+
+## TL;DR
+
+Three bullets a busy reader can act on:
+
+- What the recipe does.
+- The one insight that makes it work.
+- When NOT to use it.
+
+## The problem
+
+What goes wrong without this recipe. Be concrete — a failure you actually hit.
+
+## Context & forces
+
+The constraints and trade-offs at play (latency, cost, reliability, team skill).
+This is the "why these choices" section, à la a pattern's *forces*.
+
+## Architecture
+
+The diagram above shows the shape. Walk through it in prose here.
+
+## The recipe
+
+1. **Step one.** What to do and why.
+2. **Step two.** …
+3. **Step three.** …
+
+## Code
+
+```python
+# The smallest snippet that conveys the idea.
+# Full runnable version lives in the cookbook (see the 📦 link above).
+```
+
+## Trade-offs & alternatives
+
+What you give up, and what you'd reach for instead in different conditions.
+
+## Pitfalls
+
+The mistakes people make adopting this. Each one a sentence.
+
+## How to adopt this
+
+A short checklist a reader can follow to apply the recipe to their own system:
+
+- [ ] Prerequisite / precondition
+- [ ] Change to make
+- [ ] How to verify it worked
+
+## References
+
+Links, prior art, and the cookbook module that implements

@@ -1,0 +1,23 @@
+---
+import Base from '../layouts/Base.astro';
+import { COOKBOOK_URL } from '../consts';
+---
+
+<Base title="About">
+  <h1>About</h1>
+  <p>
+    <strong>Applied GenAI</strong> is a collection of practical, opinionated recipes for
+    building real things with generative AI. Less hype, more patterns that hold up in
+    production: agent harnesses, spec-driven development, memory systems, and prompts that
+    don't fall over the moment they meet a real user.
+  </p>
+  <p>
+    Every recipe is meant to be runnable. Where there's code, it lives in the companion
+    cookbook: <a href={COOKBOOK_URL}>applied-genai-cookbook</a>.
+  </p>
+  <h2>Who writes this</h2>
+  <p>
+    Written by Mohit Mittal. <em>(Edit <code>src/pages/about.astro</code> to tell your
+    story — who you are, what you build, and how to reach you.)</em>
+  </p>
+</Base>

@@ -1,0 +1,31 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import FormattedDate from '../components/FormattedDate.astro';
+import { SITE_DESCRIPTION } from '../consts';
+
+const recipes = (await getCollection('recipes', ({ data }) => !data.draft)).sort(
+  (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf()
+);
+---
+
+<Base>
+  <section style="margin-bottom: 3rem;">
+    <h1>Applied GenAI</h1>
+    <p class="muted" style="font-size: 1.1rem;">{SITE_DESCRIPTION}</p>
+  </section>
+
+  <h2 class="sans" style="font-size:1rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--color-muted); border-bottom:1px solid var(--color-border); padding-bottom:0.5rem;">
+    Recipes
+  </h2>
+
+  <ul class="recipe-list">
+    {recipes.map((r) => (
+      <li>
+        <h3><a href={`/recipes/${r.slug}`}>{r.data.title}</a></h3>
+        <p class="muted">{r.data.description}</p>
+        <FormattedDate date={r.data.pubDate} />
+      </li>
+    ))}
+  </ul>
+</Base>

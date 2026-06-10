@@ -1,0 +1,40 @@
+---
+// Renders a Mermaid diagram. Pass the diagram source as `chart`.
+interface Props {
+  chart: string;
+  alt?: string;
+}
+const { chart, alt } = Astro.props;
+---
+<figure class="diagram">
+  <pre class="mermaid" aria-label={alt}>{chart}</pre>
+  {alt && <figcaption class="muted sans">{alt}</figcaption>}
+</figure>
+
+<script>
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: dark ? 'dark' : 'neutral',
+    fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+  });
+</script>
+
+<style>
+  figure.diagram {
+    margin: 2rem 0;
+    text-align: center;
+  }
+  figure.diagram pre.mermaid {
+    background: transparent !important;
+    border: none;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+  }
+  figure.diagram figcaption {
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+  }
+</style>

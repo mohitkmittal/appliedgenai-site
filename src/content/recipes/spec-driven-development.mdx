@@ -1,0 +1,91 @@
+---
+title: "Spec-driven development with AI agents"
+description: "Write a tight spec first, let the agent implement against it, and gate the work with executable acceptance checks — so you review intent, not 500 lines of guessed code."
+pubDate: 2026-06-09
+author: "Mohit Mittal"
+authorUrl: "https://appliedgenai.io/about"
+difficulty: "intermediate"
+readingTime: "9 min"
+tags: ["sdd", "workflow", "patterns"]
+stack: ["Markdown", "Python", "Any coding agent"]
+diagram: |
+  flowchart LR
+    I[Intent] --> S[Spec.md<br/>goals · non-goals · acceptance]
+    S --> P[Plan<br/>steps + files]
+    P --> C[Agent implements]
+    C --> A{Acceptance<br/>checks pass?}
+    A -->|no| C
+    A -->|yes| D[Done + spec as docs]
+diagramAlt: "Flow from intent to a written spec, to a plan, to agent implementation, gated by executable acceptance checks that loop back until they pass."
+code: "https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/sdd"
+---
+import Mermaid from '../../components/Mermaid.astro';
+
+## TL;DR
+
+- Make the **spec** the artifact you review, not the diff. Code is cheap; intent is expensive.
+- Encode acceptance criteria as **executable checks** so "done" is a green test, not an opinion.
+- The spec becomes living documentation once it ships.
+
+## The problem
+
+Hand an agent a one-line task and it will confidently produce a large, plausible diff built on assumptions you never made. You then spend more time reverse-engineering its intent from the code than it would have taken to state the intent up front. Review collapses into archaeology.
+
+## Context & forces
+
+Agents are fast at producing code and bad at guessing under-specified intent. Humans are slow at reading code and good at judging intent. Spec-driven development plays to both: humans review a short spec (high leverage), agents implement against it (high speed), and executable checks settle "is it correct" without a human in the loop.
+
+## Architecture
+
+Four artifacts, in order: **intent → spec → plan → implementation**, with a gate of **acceptance checks** between plan and done. The loop only closes when the checks pass. Crucially, the human reviews at the *spec* stage, where a five-minute read can redirect hours of work.
+
+## The recipe
+
+1. **Write `SPEC.md` before any code.** Sections: Goal, Non-goals, Constraints, Acceptance criteria. Keep it to a page.
+2. **Make acceptance criteria executable.** Each criterion maps to a test or a check command. "Returns 400 on missing field" → an actual test.
+3. **Have the agent produce a plan from the spec.** List of steps and files to touch. Review the plan, not just the spec — this catches misreadings early.
+4. **Let the agent implement against the plan.** It works step by step, running the acceptance checks as it goes.
+5. **Gate on green.** The task is done only when every acceptance check passes. Keep `SPEC.md` in the repo as documentation.
+
+## Code
+
+```markdown
+# SPEC: rate-limit the /ingest endpoint
+
+## Goal
+Reject more than 100 requests/min per API key with HTTP 429.
+
+## Non-goals
+- Distributed rate limiting across regions (single instance is fine for now).
+
+## Constraints
+- No new infra; use the existing Redis.
+
+## Acceptance criteria
+- [ ] 101st request within a minute for one key → 429  (test: test_rate_limit_trips)
+- [ ] Limit is per-key, not global                      (test: test_per_key_isolation)
+- [ ] 429 response includes Retry-After header          (test: test_retry_after_header)
+```
+
+The cookbook's `sdd` module includes this template plus a tiny runner that parses acceptance criteria and reports which are green — see the 📦 link above.
+
+## Trade-offs & alternatives
+
+For a throwaway script, a spec is overhead — just prompt and go. SDD pays off when the work is non-trivial, will be reviewed, or will be maintained. The alternative — iterating conversationally — is fine for exploration but tends to leave intent undocumented and correctness unverified.
+
+## Pitfalls
+
+- **Vague acceptance criteria** ("should be fast") that can't be executed — make each one checkable.
+- **Skipping the plan review** — most agent misunderstandings are visible in the plan, cheaply.
+- **Letting the spec rot** — update it when scope changes, or it stops being trustworthy docs.
+
+## How to adopt this
+
+- [ ] Add a `SPEC.md` template to your repo.
+- [ ] For the next non-trivial task, write the spec first and review it before any code.
+- [ ] Turn each acceptance criterion into a test command.
+- [ ] Require all acceptance checks green before merge.
+
+## References
+
+Implements the `sdd` module in the cookbook. Combine with the [effective agent harness](/recipes/effective-agent-harness) so the agent runs acceptance checks inside its own

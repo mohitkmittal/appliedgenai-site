@@ -1,0 +1,93 @@
+---
+title: "Build an effective agent harness"
+description: "A minimal, reliable loop that turns a chat model into an agent: tools, a control loop, guardrails, and observability — without a framework."
+pubDate: 2026-06-09
+author: "Mohit Mittal"
+authorUrl: "https://appliedgenai.io/about"
+difficulty: "intermediate"
+readingTime: "10 min"
+tags: ["agents", "harness", "patterns"]
+stack: ["Python", "Anthropic API"]
+diagram: |
+  flowchart TD
+    U[User goal] --> H[Harness loop]
+    H --> M[Model call]
+    M -->|tool_use| T[Tool dispatch]
+    T --> G{Guardrails<br/>budget · retries · timeout}
+    G -->|ok| R[Tool result]
+    R --> H
+    M -->|final text| O[Answer + trace]
+    G -->|tripwire| O
+diagramAlt: "The harness wraps the model in a loop: call model, dispatch tools, enforce guardrails, feed results back until a final answer or a tripwire fires."
+code: "https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/harness"
+---
+import Mermaid from '../../components/Mermaid.astro';
+
+## TL;DR
+
+- An "agent" is mostly a **loop** around a model that can call tools — you can write the reliable core in ~150 lines.
+- The value isn't the loop, it's the **guardrails**: a step budget, per-tool timeouts, retries, and a full trace.
+- Don't reach for a framework until this loop genuinely hurts.
+
+## The problem
+
+The demo works: the model calls a tool, you paste back the result, it answers. Then it meets reality — it loops forever, calls a tool with garbage arguments, blows your token budget on a runaway plan, or fails silently and you have no idea why. The gap between "calls a tool once" and "runs unattended" is the harness.
+
+## Context & forces
+
+You're balancing four forces. **Autonomy** (let the model decide next steps) pulls against **control** (don't let it run away). **Latency/cost** pull against **thoroughness**. The harness is where you make those trade-offs explicit and tunable, instead of hoping the prompt holds.
+
+## Architecture
+
+The diagram above is the whole idea: a control loop that alternates between *model calls* and *tool dispatch*, with a guardrail gate between deciding to act and acting. Every pass through the loop is recorded so you can replay exactly what happened.
+
+## The recipe
+
+1. **Define tools as data + a function.** Each tool is a JSON schema (name, description, input schema) plus a Python callable. The model sees the schema; the harness owns the callable.
+2. **Run the loop.** Call the model. If it returns `tool_use`, dispatch to the matching callable, append the result as a `tool_result`, and loop. If it returns final text, stop.
+3. **Gate every action with guardrails.** Before dispatching: check the step budget, validate arguments against the schema, apply a timeout, and wrap in bounded retries with backoff.
+4. **Trace everything.** Append every model message, tool call, argument, result, and timing to a structured trace. This is your debugger and your eval data.
+5. **Define tripwires.** Hard stops: max steps reached, token budget exceeded, the same tool called with identical args N times (loop detection), or a tool raising a non-retryable error.
+
+## Code
+
+```python
+def run(goal: str, tools: dict[str, Tool], *, max_steps: int = 12) -> Result:
+    messages = [{"role": "user", "content": goal}]
+    trace = Trace()
+    for step in range(max_steps):
+        reply = model.call(messages, tools=[t.schema for t in tools.values()])
+        trace.record_model(reply)
+        if reply.stop_reason != "tool_use":
+            return Result(answer=reply.text, trace=trace)
+        for call in reply.tool_calls:
+            with guardrails(call, trace):            # validate · timeout · retry
+                result = tools[call.name](**call.args)
+            messages += [reply.as_message(), tool_result(call, result)]
+    return Result(answer=None, trace=trace, stopped="max_steps")
+```
+
+The full version — schema validation, retries with backoff, loop detection, and a pretty-printed trace — is in the cookbook (see the 📦 link above).
+
+## Trade-offs & alternatives
+
+Rolling your own keeps the loop legible and debuggable, which matters most early. Once you need multi-agent orchestration, durable/resumable runs, or a large tool catalog with routing, a framework (LangGraph, etc.) starts paying for itself. The harness above is the thing those frameworks generalize — understanding it makes the framework choice easier later.
+
+## Pitfalls
+
+- **No step budget** — the single most common cause of runaway cost. Set it on day one.
+- **Trusting tool arguments** — always validate against the schema before executing.
+- **Swallowing tool errors** — feed a structured error back to the model so it can recover, but count failures toward a tripwire.
+- **No trace** — without it, every failure is unreproducible.
+
+## How to adopt this
+
+- [ ] Wrap your existing model call in the loop above.
+- [ ] Move each tool behind a schema + callable pair.
+- [ ] Add a `max_steps` budget and a per-tool timeout.
+- [ ] Log a structured trace for every run.
+- [ ] Add loop detection (same tool + same args ≥ 2) before going unattended.
+
+## References
+
+Implements the `harness` module in the cookbook. Pairs well with the [spec-driven development](/recipes/spec-driven-development) recipe for deciding *what* the agent should do before you let it 

@@ -1,0 +1,35 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import FormattedDate from '../../components/FormattedDate.astro';
+
+export async function getStaticPaths() {
+  const recipes = await getCollection('recipes', ({ data }) => !data.draft);
+  const tags = [...new Set(recipes.flatMap((r) => r.data.tags))];
+  return tags.map((tag) => ({
+    params: { tag },
+    props: {
+      tag,
+      recipes: recipes
+        .filter((r) => r.data.tags.includes(tag))
+        .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf()),
+    },
+  }));
+}
+
+const { tag, recipes } = Astro.props;
+---
+
+<Base title={`#${tag}`}>
+  <h1>#{tag}</h1>
+  <p class="muted">{recipes.length} recipe{recipes.length === 1 ? '' : 's'}</p>
+  <ul class="recipe-list">
+    {recipes.map((r) => (
+      <li>
+        <h3><a href={`/recipes/${r.slug}`}>{r.data.title}</a></h3>
+        <p class="muted">{r.data.description}</p>
+        <FormattedDate date={r.data.pubDate} />
+      </li>
+    ))}
+  </ul>
+</Base>
