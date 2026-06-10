@@ -1,0 +1,201 @@
+---
+title: "An evaluation harness you can ship on"
+description: "You can't improve — or safely ship — what you can't measure. This is how enterprises turn 'the demo looked good' into a regression-gated eval suite that tells you, before deploy, whether a change made the product better or worse."
+pubDate: 2026-06-09
+author: "Mohit Mittal"
+authorUrl: "https://appliedgenai.io/about"
+difficulty: "advanced"
+readingTime: "17 min"
+tags: ["enterprise", "evals", "reliability", "patterns"]
+stack: ["Python", "CI", "Any model"]
+diagram: |
+  flowchart LR
+    DS[Golden set<br/>inputs + expectations] --> RUN[Run system<br/>on every case]
+    RUN --> SC[Score each case<br/>assertion · model-graded · human]
+    SC --> AGG[Aggregate<br/>pass rate by slice]
+    AGG --> GATE{Above bar?}
+    GATE -->|yes| SHIP[Merge / deploy]
+    GATE -->|no| BLOCK[Block + show regressions]
+    PROD[(Production traces)] -.harvest failures.-> DS
+    classDef stop fill:#f5e7e3,stroke:#b1361e;
+    class BLOCK stop;
+diagramAlt: "An eval loop: a golden set runs through the system, each case is scored, results aggregate into pass rates, and a gate blocks or ships; production traces feed new cases back into the golden set."
+---
+import Mermaid from '../../components/Mermaid.astro';
+import Callout from '../../components/Callout.astro';
+
+export const offlineOnlineDiagram = `flowchart TB
+    subgraph Offline["Offline (before deploy)"]
+      direction TB
+      G[Golden set] --> E[Eval run in CI]
+      E --> D{Gate}
+    end
+    subgraph Online["Online (after deploy)"]
+      direction TB
+      L[Live traffic] --> S[Sampled scoring]
+      S --> A[Alerts + dashboards]
+      A --> F[Feedback signals]
+    end
+    D -->|ship| L
+    F -.new hard cases.-> G`;
+
+export const flywheelDiagram = `flowchart LR
+    P[Production failure] --> C[Capture trace]
+    C --> M[Minimize to a case]
+    M --> ADD[Add to golden set]
+    ADD --> FIX[Fix + re-run evals]
+    FIX --> REG[Now a regression test forever]
+    REG --> P`;
+
+export const pyramidDiagram = `flowchart TB
+    H[Human eval<br/>few, expensive, gold standard] --- MG[Model-graded<br/>many, cheap, needs calibration]
+    MG --- AS[Assertions<br/>most, instant, deterministic]
+    classDef base fill:#f5e7e3,stroke:#b1361e;
+    class AS base;`;
+
+## TL;DR
+
+- Eval is to AI products what tests are to software: the thing that lets you change the system and *know* whether you helped or hurt. Without it, every deploy is a guess.
+- Build three tiers — cheap deterministic **assertions**, scalable **model-graded** scores, and rare **human** judgments — and run them against a **golden set** in CI as a merge gate.
+- The flywheel is the whole game: every production failure becomes a minimized case in the golden set, so the same mistake can never ship twice.
+
+<Callout type="key">
+"It worked when I tried it" is not a quality bar; it's a sample size of one. The entire purpose
+of an eval harness is to replace a tired human's vibe-check with a number you can gate on —
+and to make that number move in the right direction on purpose.
+</Callout>
+
+## The problem: shipping blind
+
+A team builds an LLM feature. It demos well, so it ships. Then someone tweaks the prompt to fix one bug, and unknowingly breaks three other cases nobody re-checked. A model version updates and behavior subtly shifts. A new retrieval source adds noise. None of this is visible, because "quality" lives in a few people's heads and gets spot-checked by hand, inconsistently, under deadline.
+
+This is shipping blind, and it's the default state of most AI products. The symptom is telling: the team is *afraid to change the prompt* because they can't predict what it'll do. That fear is the absence of evals. With software, you'd never refactor without tests; with AI, teams routinely deploy without the equivalent, then wonder why quality feels like whack-a-mole.
+
+<Callout type="warn">
+The cost of no evals isn't just bugs — it's velocity. A team that can't measure quality slows
+to a crawl because every change is risky. A team with good evals ships confidently and fast,
+because the harness catches regressions before users do. Evals are a speed feature, not a tax.
+</Callout>
+
+## Offline and online: two loops, one system
+
+Evaluation happens in two places, and you need both.
+
+**Offline evals** run *before* deploy, in CI, against a curated golden set. They answer: "did this change make the system better or worse?" They're your merge gate.
+
+**Online evals** run *after* deploy, against real traffic (sampled). They answer: "is the system actually working in the wild, on inputs we never imagined?" They're your monitoring.
+
+<Mermaid chart={offlineOnlineDiagram} alt="Two loops: offline evals run a golden set through CI with a gate before deploy; online evals score sampled live traffic into alerts and feedback that flows back into the golden set." />
+
+The connection between them is the source of all durable improvement: online evals surface the hard cases you didn't anticipate, and those cases flow back into the offline golden set, where they become permanent regression tests.
+
+## The golden set: your source of truth
+
+Everything rests on a curated set of cases — inputs paired with what a good output looks like. Building it well is the highest-leverage work in the whole effort.
+
+A few principles. **Start small and real**: 30–50 cases drawn from actual usage beat 1,000 synthetic ones. **Cover the slices that matter**: not just the happy path but the categories you care about — different user types, languages, edge cases, known failure modes. **Make expectations checkable**: an expected exact answer, a rubric, a "must contain / must not contain," or a reference output to compare against. **Version it**: the golden set lives in the repo and evolves through pull requests like any other critical asset.
+
+<Callout type="note">
+Don't wait for a perfect dataset. The golden set is meant to grow forever — it's never "done."
+Ship with 40 cases and a process for adding more, not with a six-month data-collection project
+that delays every other decision.
+</Callout>
+
+## Three tiers of scoring
+
+How do you score an output? There's a hierarchy, and a good harness uses all three deliberately — most checks cheap and deterministic, fewer expensive and human.
+
+<Mermaid chart={pyramidDiagram} alt="An eval pyramid: assertions form the cheap deterministic base, model-graded checks the scalable middle, and human evaluation the rare gold-standard top." />
+
+**Assertions** are deterministic, instant, and free: did the JSON parse? Is the required field present? Does it cite a real source? Is it under the length limit? Did it avoid a forbidden phrase? Push as much as possible down to this tier — anything you can check with code, check with code.
+
+**Model-graded** evals use a model to judge open-ended quality against a rubric ("Is this summary faithful to the source? Score 1–5"). They scale to thousands of cases cheaply, but they must be **calibrated** against human judgment or you're just measuring one model's opinion of another. Spot-check the grader regularly.
+
+**Human evals** are the gold standard for subjective quality and the calibration anchor for the other two. They're slow and expensive, so reserve them for a small, rotating sample and for settling cases where the cheaper tiers disagree.
+
+```python
+# Assertion tier — deterministic, runs in milliseconds
+def check_grounded(output, case):
+    assert output.citations, "no citation provided"
+    assert all(c.source_id in case.allowed_sources for c in output.citations)
+
+# Model-graded tier — a rubric the grader model applies
+FAITHFULNESS = """Rate 1-5: is every claim in the SUMMARY supported by the SOURCE?
+Return JSON: {"score": int, "unsupported_claims": [str]}"""
+```
+
+## Running it as a gate in CI
+
+The harness earns its keep when it's wired into CI as a **merge gate**: a pull request that drops the pass rate below the bar (or regresses any protected slice) cannot merge. This is what turns evals from a report nobody reads into a force that actually protects quality.
+
+The structure mirrors a test suite: load the golden set, run the system on every case, score each with the appropriate tier, aggregate by slice, and compare against the baseline.
+
+```python
+results = [score(run_system(case), case) for case in golden_set]
+report = aggregate(results, by="slice")
+
+if report.pass_rate < BAR or report.regressed_any_slice(baseline):
+    print(report.diff(baseline))      # show exactly what broke
+    sys.exit(1)                        # block the merge
+```
+
+<Callout type="key">
+Gate on <em>slices</em>, not just the overall number. An average pass rate can stay flat while
+a critical category quietly collapses. "Overall 94%" hides "refunds dropped from 99% to 70%."
+The slice-level diff against baseline is what catches the regression that matters.
+</Callout>
+
+## The flywheel: where quality compounds
+
+Here's the practice that separates teams that improve from teams that thrash. Every time the system fails in production, you don't just patch it — you *capture* it.
+
+<Mermaid chart={flywheelDiagram} alt="The eval flywheel: a production failure is captured as a trace, minimized to a case, added to the golden set, fixed, re-run, and becomes a permanent regression test." />
+
+A production failure becomes a captured trace (this is exactly why the [agent harness](/recipes/effective-agent-harness) records everything). You minimize it to the smallest reproducing case, add it to the golden set with the correct expectation, then fix the system and re-run. From that moment, the failure is a permanent regression test — the same mistake physically cannot ship again. Do this consistently and your golden set becomes a precise map of your product's real-world weaknesses, and your quality compounds while competitors play whack-a-mole.
+
+## Metrics that actually matter
+
+Resist the urge to track everything. For most enterprise AI features, a small set carries the signal:
+
+| Metric | What it tells you | Watch for |
+|---|---|---|
+| **Task success rate** | did it accomplish the user's goal | the headline number; gate on it by slice |
+| **Faithfulness / grounding** | did it stay true to sources | the enterprise trust metric; hallucination shows here |
+| **Refusal / escalation rate** | how often it punts to a human | too high = useless; too low = overconfident |
+| **Latency p50/p95** | is it fast enough to use | multi-step reasoning blows p95 |
+| **Cost per task** | unit economics | the number that decides if the feature is viable |
+
+<Callout type="note">
+Tie every metric to a decision. If a number going up or down wouldn't change what you do,
+stop tracking it — it's dashboard decoration. The metrics above each map to a lever: ship/block,
+add guardrails, tune escalation, optimize the loop, or change the model.
+</Callout>
+
+## Trade-offs and honest limits
+
+Evals cost real effort — curating the golden set, calibrating graders, maintaining the harness — and they're never complete; a passing suite means "no known regressions," not "correct." Model-graded evals can be gamed and drift, so they need ongoing calibration. And an over-fit golden set can give false confidence if it stops reflecting real traffic. The mitigation for all of these is the flywheel: keep feeding real failures in, keep spot-checking the graders, and treat the suite as a living system, not a one-time project.
+
+The alternative — shipping on vibes — is cheaper today and ruinously expensive the first time a silent regression reaches a customer. For anything enterprise-grade, evals aren't optional; they're the price of being trusted.
+
+## Pitfalls
+
+- **Vibe-checking instead of measuring** — "it looked good" doesn't survive the second prompt change; write the case down.
+- **Only an overall number** — gate on slices, or a critical category will collapse under a healthy-looking average.
+- **Uncalibrated model graders** — a grader you never check against humans is measuring an opinion, not quality.
+- **A static golden set** — if it doesn't grow from production failures, it slowly stops reflecting reality.
+- **Evals that don't gate** — a report nobody is forced to act on changes nothing; wire it into CI as a blocker.
+- **Boiling the ocean** — waiting for a huge dataset instead of starting with 40 real cases and a process.
+
+## How to adopt this
+
+- [ ] Collect 30–50 real cases into a versioned golden set in your repo, tagged by slice.
+- [ ] Write deterministic assertions for everything checkable in code.
+- [ ] Add a model-graded rubric for the open-ended quality you care about; calibrate it against a handful of human judgments.
+- [ ] Build a runner that scores the golden set and diffs against a baseline by slice.
+- [ ] Wire it into CI as a merge gate with a pass-rate bar and no-slice-regression rule.
+- [ ] Sample production traffic for online scoring and alerting.
+- [ ] Adopt the flywheel: every production failure becomes a minimized golden-set case before you close the ticket.
+
+## References
+
+This recipe is the measurement backbone for the [AI-native product architecture](/recipes/ai-native-product-architecture) — it's what lets you promote a capability up the maturity ladder with evidence instead of optimism. It consumes the traces produced by the [agent harness](/recipes/effective-agent-harness) and pairs with [spec-driven development](/recipes/spec-driven-development), whose executable acceptance criteria are evals by another name. Building blocks live in the [cookbook](https://github.com/mohitkmittal/applied-genai-cookbook).

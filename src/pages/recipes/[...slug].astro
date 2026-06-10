@@ -3,17 +3,23 @@ import { getCollection } from 'astro:content';
 import Recipe from '../../layouts/Recipe.astro';
 
 export async function getStaticPaths() {
-  const recipes = await getCollection('recipes');
-  return recipes.map((entry) => ({
+  const recipes = (await getCollection('recipes', ({ data }) => !data.draft)).sort(
+    (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf()
+  );
+  return recipes.map((entry, i) => ({
     params: { slug: entry.slug },
-    props: entry,
+    props: {
+      entry,
+      prev: i > 0 ? { slug: recipes[i - 1].slug, title: recipes[i - 1].data.title } : null,
+      next: i < recipes.length - 1 ? { slug: recipes[i + 1].slug, title: recipes[i + 1].data.title } : null,
+    },
   }));
 }
 
-const entry = Astro.props;
-const { Content } = await entry.render();
+const { entry, prev, next } = Astro.props;
+const { Content, headings } = await entry.render();
 ---
 
-<Recipe {...entry.data}>
+<Recipe {...entry.data} headings={headings} prev={prev} next={next}>
   <Content />
 </Recipe>

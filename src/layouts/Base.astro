@@ -5,12 +5,14 @@ import '../styles/global.css';
 interface Props {
   title?: string;
   description?: string;
+  wide?: boolean;
 }
 
-const { title, description } = Astro.props;
-const pageTitle = title ? `${title} · ${SITE_TITLE}` : SITE_TITLE;
+const { title, description, wide } = Astro.props;
+const pageTitle = title ? `${title} · ${SITE_TITLE}` : `${SITE_TITLE} — recipes for building with generative AI`;
 const pageDesc = description ?? SITE_DESCRIPTION;
 const canonical = new URL(Astro.url.pathname, Astro.site);
+const container = wide ? 'wrap-wide' : 'wrap';
 ---
 
 <!doctype html>
@@ -25,13 +27,14 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <meta property="og:title" content={pageTitle} />
     <meta property="og:description" content={pageDesc} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
     <header class="site">
-      <div class="wrap">
-        <a class="brand" href="/">Applied&nbsp;GenAI</a>
+      <div class="wrap-wide">
+        <a class="brand" href="/"><span class="dot"></span>Applied&nbsp;GenAI</a>
         <nav>
           <a href="/">Recipes</a>
           <a href="/about">About</a>
@@ -39,13 +42,13 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
         </nav>
       </div>
     </header>
-    <main class="wrap">
+    <main class={container}>
       <slot />
     </main>
     <footer class="site">
-      <div class="wrap">
-        <span>© {new Date().getFullYear()} Applied GenAI</span>
-        <span>Recipes for building with generative AI.</span>
+      <div class="wrap-wide">
+        <span>© {new Date().getFullYear()} Applied GenAI · by Mohit Mittal</span>
+        <span><a href="/rss.xml">RSS</a> · <a href="https://github.com/mohitkmittal/applied-genai-cookbook">Cookbook on GitHub</a></span>
       </div>
     </footer>
   </body>

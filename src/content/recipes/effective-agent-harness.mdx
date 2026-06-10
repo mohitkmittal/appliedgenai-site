@@ -1,93 +1,311 @@
 ---
 title: "Build an effective agent harness"
-description: "A minimal, reliable loop that turns a chat model into an agent: tools, a control loop, guardrails, and observability — without a framework."
+description: "An agent is a loop around a model, and the loop is the easy part. This is a deep dive into the part that actually matters: the guardrails, tracing, and control flow that let you leave it running."
 pubDate: 2026-06-09
 author: "Mohit Mittal"
 authorUrl: "https://appliedgenai.io/about"
 difficulty: "intermediate"
-readingTime: "10 min"
-tags: ["agents", "harness", "patterns"]
-stack: ["Python", "Anthropic API"]
+readingTime: "16 min"
+tags: ["agents", "harness", "patterns", "reliability"]
+stack: ["Python", "Anthropic API", "stdlib"]
 diagram: |
   flowchart TD
-    U[User goal] --> H[Harness loop]
-    H --> M[Model call]
-    M -->|tool_use| T[Tool dispatch]
-    T --> G{Guardrails<br/>budget · retries · timeout}
-    G -->|ok| R[Tool result]
-    R --> H
+    U[User goal] --> H{{Harness}}
+    H --> M[Call model]
     M -->|final text| O[Answer + trace]
-    G -->|tripwire| O
-diagramAlt: "The harness wraps the model in a loop: call model, dispatch tools, enforce guardrails, feed results back until a final answer or a tripwire fires."
+    M -->|tool_use| GR{Guardrail gate}
+    GR -->|budget ok · valid · not looping| T[Dispatch tool]
+    GR -->|tripwire| O
+    T --> R[Tool result]
+    R --> H
+    classDef stop fill:#f5e7e3,stroke:#b1361e;
+    class O stop;
+diagramAlt: "The harness is a loop: call the model; if it wants a tool, pass through a guardrail gate before dispatching; feed the result back; stop on a final answer or a tripwire."
 code: "https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/harness"
 ---
 import Mermaid from '../../components/Mermaid.astro';
+import Callout from '../../components/Callout.astro';
+
+export const loopDiagram = `flowchart LR
+    A[Model proposes next action] --> B{Action type?}
+    B -->|tool call| C[Harness executes tool]
+    C --> D[Append result to conversation]
+    D --> A
+    B -->|final answer| E[Done]
+    classDef done fill:#f5e7e3,stroke:#b1361e;
+    class E done;`;
+
+export const componentsDiagram = `flowchart TD
+    subgraph Harness
+      L[Control loop]
+      G[Guardrails: budget, timeout, retries, loop detection]
+      TR[(Trace)]
+    end
+    L <-->|messages| MODEL[Model client: any provider]
+    L --> G
+    G --> REG[Tool registry: schema + callable]
+    REG --> EXT[(Your code / APIs)]
+    L -.records.-> TR
+    G -.records.-> TR
+    REG -.records.-> TR`;
+
+export const dispatchDiagram = `flowchart TD
+    S[Tool call requested] --> K{Known tool?}
+    K -->|no| FB[Feed error back, model retries]
+    K -->|yes| LP{Loop / budget ok?}
+    LP -->|no| TW[Tripwire: end run]
+    LP -->|yes| EX[Execute with timeout + retries]
+    EX -->|ok| RS[Return result]
+    EX -->|raises| FB
+    FB --> CONT[Continue loop]
+    RS --> CONT
+    classDef stop fill:#f5e7e3,stroke:#b1361e;
+    class TW stop;`;
 
 ## TL;DR
 
-- An "agent" is mostly a **loop** around a model that can call tools — you can write the reliable core in ~150 lines.
-- The value isn't the loop, it's the **guardrails**: a step budget, per-tool timeouts, retries, and a full trace.
-- Don't reach for a framework until this loop genuinely hurts.
+- An "agent" is mostly a **loop** around a model that can call tools. The reliable core is about 80 lines of Python.
+- The loop is trivial. The value is in everything wrapped around it: a **step budget**, **per-tool timeouts**, **bounded retries**, **loop detection**, and a **complete trace** of every decision.
+- Build this yourself before you reach for a framework. The frameworks are generalizations of exactly this loop, and you'll choose one far better once you've felt where the simple version hurts.
 
-## The problem
+<Callout type="key">
+The model is a stateless function from messages to a next action. The harness is the
+state machine that keeps calling it, decides whether to honor each action it requests,
+and records what happened. Reliability lives in the harness, not the prompt.
+</Callout>
 
-The demo works: the model calls a tool, you paste back the result, it answers. Then it meets reality — it loops forever, calls a tool with garbage arguments, blows your token budget on a runaway plan, or fails silently and you have no idea why. The gap between "calls a tool once" and "runs unattended" is the harness.
+## The problem: the demo-to-production cliff
 
-## Context & forces
+Here is the demo everyone builds first. You give the model a calculator tool, ask "what's 17% of 8,400?", the model emits a `tool_use` block, you run the function, paste the result back, and it answers. It feels like magic and it took twenty minutes.
 
-You're balancing four forces. **Autonomy** (let the model decide next steps) pulls against **control** (don't let it run away). **Latency/cost** pull against **thoroughness**. The harness is where you make those trade-offs explicit and tunable, instead of hoping the prompt holds.
+Then you point it at something real — "reconcile these two CSVs and flag the discrepancies" — and the wheels come off in ways that are individually obvious and collectively fatal:
+
+- It calls a tool with an argument that doesn't match the schema, the function throws, and your whole process crashes.
+- It gets a confusing tool result, tries the same call again, gets the same result, tries again... forever. You notice when the API bill arrives.
+- It produces a beautiful plan that requires nine tool calls, and somewhere around call six it quietly forgets the original goal.
+- Something fails in the middle and you have no idea what the model saw, what it decided, or why — because nothing was recorded.
+
+None of these are model-intelligence problems. They're *control* problems. The gap between "calls a tool once" and "runs a multi-step task unattended" is precisely the harness, and it's where most of the engineering in a real agent actually lives.
+
+## What an agent actually is
+
+Strip away the vocabulary and an agent is a loop with three moves: **ask the model what to do next, do it, tell the model what happened.** Repeat until the model says it's done.
+
+<Mermaid chart={loopDiagram} alt="The agent loop as a cycle: the model proposes an action, the harness executes a tool, the result is appended to the conversation, and the model is called again." />
+
+That's the whole conceptual model. The conversation is an append-only transcript: user goal, then alternating model turns and tool results, growing until the model stops asking for tools. Everything else in this article is about making that loop *safe* and *observable* — because the naive version above will absolutely run forever, crash on the first bad argument, and leave you blind when it does.
+
+## The forces you're balancing
+
+Before writing code, name the tensions. Every design choice in a harness is a trade between four forces, and being explicit about them is what separates a toy from a tool.
+
+| Force | Pulls toward | In tension with |
+|---|---|---|
+| **Autonomy** | letting the model choose its own steps | predictability and safety |
+| **Control** | hard limits, validation, stop conditions | flexibility and "just let it work" |
+| **Cost / latency** | fewer steps, smaller context, cheaper models | thoroughness and reliability |
+| **Observability** | record everything, replay anything | code simplicity and speed |
+
+A prompt can nudge the first force. Only the harness can enforce the rest. If your reliability strategy is "ask the model nicely in the system prompt to not loop forever," you don't have a reliability strategy.
 
 ## Architecture
 
-The diagram above is the whole idea: a control loop that alternates between *model calls* and *tool dispatch*, with a guardrail gate between deciding to act and acting. Every pass through the loop is recorded so you can replay exactly what happened.
+Four parts, with a gate in the middle. The model decides; the **guardrail gate** decides whether to honor that decision; the tool layer executes; the trace records all of it.
 
-## The recipe
+<Mermaid chart={componentsDiagram} alt="Components: the loop calls the model, routes tool requests through guardrails to the tool registry, and writes every event to a trace." />
 
-1. **Define tools as data + a function.** Each tool is a JSON schema (name, description, input schema) plus a Python callable. The model sees the schema; the harness owns the callable.
-2. **Run the loop.** Call the model. If it returns `tool_use`, dispatch to the matching callable, append the result as a `tool_result`, and loop. If it returns final text, stop.
-3. **Gate every action with guardrails.** Before dispatching: check the step budget, validate arguments against the schema, apply a timeout, and wrap in bounded retries with backoff.
-4. **Trace everything.** Append every model message, tool call, argument, result, and timing to a structured trace. This is your debugger and your eval data.
-5. **Define tripwires.** Hard stops: max steps reached, token budget exceeded, the same tool called with identical args N times (loop detection), or a tool raising a non-retryable error.
+The most important architectural decision is the one that's easy to miss: **the model never touches your code directly.** It emits a request to call a tool by name; the harness owns the mapping from that name to an actual function, validates the arguments, and decides whether to run it. The model proposes, the harness disposes.
 
-## Code
+## Building it, piece by piece
+
+### 1. Tools are data plus a callable
+
+A tool is two things glued together: a JSON schema the model sees (so it knows the tool exists and how to call it) and a Python callable the harness owns (the thing that actually runs). Keep them together so they can't drift apart.
 
 ```python
-def run(goal: str, tools: dict[str, Tool], *, max_steps: int = 12) -> Result:
-    messages = [{"role": "user", "content": goal}]
+from dataclasses import dataclass
+from typing import Any, Callable
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    input_schema: dict[str, Any]   # JSON Schema — what the MODEL sees
+    fn: Callable[..., Any]          # the implementation — what WE run
+
+    @property
+    def schema(self) -> dict:
+        return {"name": self.name, "description": self.description,
+                "input_schema": self.input_schema}
+```
+
+The description and schema are prompt engineering in disguise: they're the only thing the model knows about your tool. Vague descriptions produce vague tool use. "Search the database" invites garbage; "Search customer records by exact email; returns up to 10 matches" gets you precision.
+
+### 2. The control loop
+
+Here is the heart of it — the loop that turns a model into an agent. Read it once; the rest of the article is just hardening each line.
+
+```python
+def run(goal, tools, model, *, guardrails=None, system=None):
+    g = guardrails or Guardrails()
     trace = Trace()
-    for step in range(max_steps):
-        reply = model.call(messages, tools=[t.schema for t in tools.values()])
+    messages = ([{"role": "system", "content": system}] if system else [])
+    messages.append({"role": "user", "content": goal})
+    schemas = [t.schema for t in tools.values()]
+
+    for step in range(g.max_steps + 1):
+        g.check_step_budget(step)              # tripwire if over budget
+        reply = model.call(messages, schemas)
         trace.record_model(reply)
+
         if reply.stop_reason != "tool_use":
-            return Result(answer=reply.text, trace=trace)
+            return Result(answer=reply.text, trace=trace)   # done
+
+        messages.append(reply.as_assistant_message())
         for call in reply.tool_calls:
-            with guardrails(call, trace):            # validate · timeout · retry
-                result = tools[call.name](**call.args)
-            messages += [reply.as_message(), tool_result(call, result)]
+            result = dispatch(call, tools, g, trace)         # validated + guarded
+            messages.append(tool_result(call, result))
     return Result(answer=None, trace=trace, stopped="max_steps")
 ```
 
-The full version — schema validation, retries with backoff, loop detection, and a pretty-printed trace — is in the cookbook (see the 📦 link above).
+<Callout type="note">
+Notice the loop is provider-agnostic. The model call returns a normalized reply regardless
+of whether the backend is Anthropic, OpenAI, or a local model. A thin adapter does the
+provider-specific translation. This separation is what lets you swap models without touching
+your agent logic — and the <a href="https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/harness">cookbook</a>
+ships both a real Anthropic adapter and a scripted fake for tests.
+</Callout>
 
-## Trade-offs & alternatives
+### 3. Guardrails — where reliability actually comes from
 
-Rolling your own keeps the loop legible and debuggable, which matters most early. Once you need multi-agent orchestration, durable/resumable runs, or a large tool catalog with routing, a framework (LangGraph, etc.) starts paying for itself. The harness above is the thing those frameworks generalize — understanding it makes the framework choice easier later.
+This is the section that matters. Each guardrail addresses one specific failure mode from the cliff above.
+
+**The step budget.** The single most important line of code in any agent. Without it, one bad reasoning chain bills you for thousands of model calls.
+
+```python
+def check_step_budget(self, step: int) -> None:
+    if step >= self.max_steps:
+        raise TripwireError(f"max_steps ({self.max_steps}) reached")
+```
+
+**Per-tool timeout and bounded retries.** Tools call networks, databases, and other flaky things. A hung tool shouldn't hang the agent, and a transient failure shouldn't kill the run. Wrap each call:
+
+```python
+def run_tool(self, fn, args):
+    last_err = None
+    for attempt in range(self.max_retries + 1):
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(lambda: fn(**args)).result(timeout=self.tool_timeout_s)
+        except FutureTimeout:
+            last_err = TimeoutError("tool exceeded timeout")
+        except Exception as e:
+            last_err = e
+        time.sleep(self.retry_backoff_s * (2 ** attempt))   # exponential backoff
+    raise last_err
+```
+
+**Loop detection.** The subtlest failure. The model gets stuck calling the same tool with the same arguments, expecting a different result. Catch it by fingerprinting calls:
+
+```python
+def check_loop(self, name, args):
+    key = (name, repr(sorted(args.items())))
+    self._seen[key] = self._seen.get(key, 0) + 1
+    if self._seen[key] > self.loop_repeat_threshold:
+        raise TripwireError("loop detected: same tool, same args")
+```
+
+The dispatch path threads these together. Crucially, note how a *tool error* differs from a *tripwire*: an error is fed back to the model as a tool result so it can recover; a tripwire ends the run.
+
+<Mermaid chart={dispatchDiagram} alt="Dispatch decision flow: unknown tools and errors are fed back to the model to recover; budget and loop violations trip the wire and end the run." />
+
+<Callout type="key">
+The distinction between "recoverable error" and "tripwire" is the core design judgment of
+a harness. Recoverable errors (bad arguments, a 404, a malformed query) go back to the
+model — it's often smart enough to fix them. Tripwires (budget exhausted, infinite loop,
+a tool that must-not-fail failing) end the run, because continuing only burns money.
+</Callout>
+
+### 4. Tracing — your debugger and your eval set
+
+Every model turn, tool call, argument, result, and timing goes into an append-only trace. This is non-negotiable for two reasons: when something goes wrong it's the only way to see what happened, and over time your traces become the regression suite you test future changes against.
+
+```python
+trace.record("tool_call", name=call.name, args=call.args)
+# ... after execution ...
+trace.record("tool_result", name=call.name, result=result, ms=elapsed)
+```
+
+A pretty-printed trace from a real run reads like a transcript of the agent's reasoning:
+
+```
+model -> calls: search_orders
+  search_orders({'email': 'a@b.com'})
+  -> [order #1021, #1044]   (84ms)
+model -> calls: refund
+  refund({'order_id': 1044, 'amount': 29.0})
+  -> {'status': 'ok'}       (210ms)
+model -> "I found two orders and refunded #1044 as requested."
+```
+
+When a customer says "the agent did something weird," this trace is the difference between a five-minute diagnosis and an afternoon of guessing.
+
+## Testing a harness without spending a cent
+
+Because the model is behind a `ModelClient` protocol, you can test all of your control logic deterministically with a scripted fake — no API key, no flakiness, no cost. This is how you write *fast* tests for agent behavior.
+
+```python
+script = [
+    ModelReply("tool_use", tool_calls=[ToolCall("t1", "add", {"a": 2, "b": 3})]),
+    ModelReply("end_turn", text="5"),
+]
+result = run("2+3?", {"add": ADD}, ScriptedModel(script))
+assert result.answer == "5"
+```
+
+You can script a model that loops forever and assert your loop-detection trips; script one that calls an unknown tool and assert the error is fed back, not fatal. The cookbook's test suite does exactly this — every guardrail has a test, all green, all offline.
+
+## Trade-offs: when to graduate to a framework
+
+Rolling your own keeps the loop legible, debuggable, and dependency-free — which matters most early, when you're still learning what your agent needs to do. But there's a real point where a framework earns its complexity. Here's how to think about the crossover:
+
+| Signal | Stay with your harness | Reach for a framework |
+|---|---|---|
+| Number of tools | a handful, hand-wired | dozens, needs routing |
+| Run shape | single linear loop | branching, parallel sub-agents |
+| Durability | completes in one process | must pause/resume across restarts |
+| Team | you, reading the code | many contributors |
+| State | conversation in memory | persisted, queryable, replayable |
+
+<Callout type="warn">
+Don't adopt a framework to avoid understanding the loop. Adopt it once you understand the
+loop so well that the framework's abstractions read as obvious conveniences rather than
+mysteries. A framework you don't understand is a liability the first time it misbehaves at 2am.
+</Callout>
 
 ## Pitfalls
 
-- **No step budget** — the single most common cause of runaway cost. Set it on day one.
-- **Trusting tool arguments** — always validate against the schema before executing.
-- **Swallowing tool errors** — feed a structured error back to the model so it can recover, but count failures toward a tripwire.
-- **No trace** — without it, every failure is unreproducible.
+The recurring mistakes, each a sentence so you can scan them:
+
+- **No step budget** — the number-one cause of runaway cost; set it before anything else.
+- **Trusting tool arguments** — always validate against the schema before executing, because the model will eventually send you garbage.
+- **Swallowing tool errors silently** — feed a structured error back so the model can recover, but count failures toward a tripwire so it can't retry forever.
+- **One giant tool that does everything** — the model can't reason about a tool whose behavior depends on a `mode` argument with twelve values; prefer several small, sharply-described tools.
+- **No trace** — without it, every production failure is unreproducible and every regression is invisible.
+- **Letting context grow unbounded** — long runs blow the context window; summarize or prune old tool results once they're no longer needed.
 
 ## How to adopt this
 
-- [ ] Wrap your existing model call in the loop above.
-- [ ] Move each tool behind a schema + callable pair.
-- [ ] Add a `max_steps` budget and a per-tool timeout.
-- [ ] Log a structured trace for every run.
-- [ ] Add loop detection (same tool + same args ≥ 2) before going unattended.
+A concrete path from wherever you are today:
+
+- [ ] Wrap your existing single model call in the `run` loop above.
+- [ ] Move each tool behind a `Tool` (schema + callable) and write sharp descriptions.
+- [ ] Add a `max_steps` budget and a per-tool timeout — today, before anything else.
+- [ ] Add bounded retries with exponential backoff around tool execution.
+- [ ] Record a structured trace of every model turn and tool call.
+- [ ] Add loop detection (same tool + same args ≥ 2) before you let it run unattended.
+- [ ] Write one scripted-model test per guardrail so behavior can't silently regress.
 
 ## References
 
-Implements the `harness` module in the cookbook. Pairs well with the [spec-driven development](/recipes/spec-driven-development) recipe for deciding *what* the agent should do before you let it 
+This recipe is implemented end-to-end in the [`harness` module](https://github.com/mohitkmittal/applied-genai-cookbook/tree/main/src/agcookbook/harness) of the cookbook — `types.py`, `harness.py`, `guardrails.py`, `trace.py`, and a runnable example, all stdlib-only with a passing test suite. It pairs naturally with [spec-driven development](/recipes/spec-driven-development): use a spec to decide *what* the agent should accomplish, then let this harness execute it with the acceptance checks running inside the loop.

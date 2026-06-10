@@ -1,0 +1,206 @@
+---
+title: "Architecting an AI-native product"
+description: "Most 'AI features' are a chatbot bolted onto a CRUD app. An AI-native product is built the other way around — capabilities first, with the model in the critical path and the UI, data, and org reshaped to match. Here's the reference architecture."
+pubDate: 2026-06-09
+author: "Mohit Mittal"
+authorUrl: "https://appliedgenai.io/about"
+difficulty: "advanced"
+readingTime: "18 min"
+tags: ["enterprise", "architecture", "product", "patterns"]
+stack: ["System design", "LLM platform", "Any backend"]
+diagram: |
+  flowchart TB
+    subgraph Experience["Experience layer"]
+      UI[Adaptive UI · chat, inline, ambient]
+    end
+    subgraph Capability["Capability layer"]
+      ORC[Orchestrator / agent harness]
+      EVAL[Eval + guardrail gate]
+    end
+    subgraph Knowledge["Knowledge & memory"]
+      RET[Retrieval]
+      MEM[Memory]
+      TOOLS[Tools / actions]
+    end
+    subgraph Foundation["Foundation"]
+      MODELS[Model gateway · multi-model]
+      OBS[Observability · traces, evals, cost]
+      GOV[Governance · authz, PII, audit]
+    end
+    UI --> ORC --> EVAL
+    ORC --> RET & MEM & TOOLS
+    ORC --> MODELS
+    EVAL -.-> OBS
+    ORC -.-> GOV
+diagramAlt: "A four-layer AI-native architecture: experience on top, a capability layer (orchestrator + eval gate), a knowledge/memory/tools layer, and a foundation of model gateway, observability, and governance."
+---
+import Mermaid from '../../components/Mermaid.astro';
+import Callout from '../../components/Callout.astro';
+
+export const boltOnDiagram = `flowchart LR
+    subgraph BoltOn["AI-as-feature (bolt-on)"]
+      direction TB
+      A1[CRUD app] --> A2[New button: Ask AI]
+      A2 --> A3[One prompt to one model]
+      A3 --> A4[Paste text back into UI]
+    end
+    subgraph Native["AI-native"]
+      direction TB
+      B1[User intent] --> B2[Orchestrator decides]
+      B2 --> B3[Retrieve, act, reason, verify]
+      B3 --> B4[UI adapts to the result]
+      B4 --> B2
+    end`;
+
+export const requestDiagram = `sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant K as Knowledge (retrieval/memory)
+    participant M as Model gateway
+    participant G as Eval + guardrail gate
+    U->>O: Intent (typed, clicked, or ambient)
+    O->>K: Gather context (permissions-aware)
+    K-->>O: Grounded context
+    O->>M: Reason / plan / act
+    M-->>O: Proposed output or action
+    O->>G: Check (policy, PII, confidence)
+    G-->>O: Approve / block / escalate
+    O-->>U: Result + provenance`;
+
+export const maturityDiagram = `flowchart LR
+    C[Crawl: assistive<br/>suggest, human approves] --> W[Walk: co-pilot<br/>drafts + acts with review]
+    W --> R[Run: AI-native<br/>autonomous within guardrails]
+    classDef now fill:#f5e7e3,stroke:#b1361e;
+    class R now;`;
+
+## TL;DR
+
+- "Adding AI" to a product usually means a chat box that calls one model. That's a feature. An **AI-native** product is organized around capabilities the model makes possible, with the model in the critical path of the core workflow.
+- The architecture is four layers: **experience, capability, knowledge, and foundation.** The interesting engineering is in the capability and foundation layers — orchestration, evals, and governance — not the prompt.
+- You don't build the autonomous version first. You earn it by climbing a maturity ladder — assistive → co-pilot → AI-native — as your evals and guardrails get good enough to trust.
+
+<Callout type="key">
+The test of an AI-native product is simple: if you removed the model, would the product still
+make sense? For a bolt-on, yes — it's the same app minus a button. For an AI-native product,
+no — the model *is* the product, and everything else exists to feed it context, constrain it,
+and act on its output.
+</Callout>
+
+## The problem: the bolt-on plateau
+
+Almost every enterprise "AI initiative" starts the same way. There's a working product — a CRM, a ticketing system, an analytics dashboard — and someone adds an "Ask AI" button. It opens a chat panel, sends the user's question plus a system prompt to a single model, and pastes the answer back. The demo gets applause. Six weeks later, usage is flat.
+
+The reason is structural, not a prompt problem. The chatbot sits *beside* the product, not *inside* its workflows. It can describe what the user could do, but it can't do it. It has no durable memory of the user's context, no permissions-aware access to the data that matters, no ability to take the action the user actually wanted, and no way for the product's UI to respond to what the model figured out. It's a smart intern with their hands tied behind their back.
+
+This is the bolt-on plateau, and you can't prompt your way off it. Getting past it requires changing the architecture so the model is a first-class participant in the core loop — which is what "AI-native" actually means.
+
+<Mermaid chart={boltOnDiagram} alt="Left: a bolt-on where a CRUD app gets an Ask-AI button calling one model. Right: AI-native, where an orchestrator turns intent into retrieve/act/reason/verify and the UI adapts." />
+
+## Feature vs capability: the distinction that organizes everything
+
+The mental shift is from shipping *features* to exposing *capabilities*.
+
+A **feature** is a fixed path: a button that does a predefined thing. You enumerate them, build each one, and the product is the sum of its features. A **capability** is a general power — "summarize any document the user can see," "draft a response grounded in our policies," "take a multi-step action on the user's behalf and verify it." One capability spans what would have been dozens of features, and it composes with the others.
+
+| | Feature-oriented | Capability-oriented (AI-native) |
+|---|---|---|
+| Unit of work | a specific button/screen | a general power the model wields |
+| How it scales | linearly — build each one | combinatorially — capabilities compose |
+| Where logic lives | hardcoded in app code | in orchestration + model reasoning |
+| What the UI does | shows fixed flows | adapts to the model's output |
+| What breaks it | edge cases you didn't build | context the model can't see |
+
+<Callout type="note">
+This is why AI-native products feel different to use: instead of hunting for the right button,
+you express intent and the product figures out the path. The architecture's job is to make
+that reliable — which is much harder than building buttons, and is where the real work goes.
+</Callout>
+
+## The reference architecture
+
+Four layers, each with a clear job. The diagram at the top of this recipe shows them; here's what each one is responsible for and the decisions that matter.
+
+### Experience layer
+
+The UI stops being a fixed set of screens and becomes *adaptive*: chat where conversation fits, inline suggestions where the user is already working, and ambient actions that happen without being asked. The key design principle is **provenance** — every AI-produced result carries where it came from (sources, confidence, what action it took) so the user can trust and verify it. An AI-native UI that hides its reasoning erodes trust the first time it's wrong.
+
+### Capability layer
+
+The heart of the system: an **orchestrator** (the [agent harness](/recipes/effective-agent-harness) generalized) that turns intent into a sequence of retrieval, reasoning, and actions, and an **eval + guardrail gate** that checks every output before it reaches the user or the world. This layer is where "the model decides, the system disposes" lives. It's also where most of your engineering effort will go, and rightly so.
+
+### Knowledge & memory layer
+
+The model is only as good as the context you feed it. This layer provides **retrieval** over enterprise knowledge (permissions-aware — see the [enterprise RAG](/recipes/spec-driven-development) approach), **memory** of the user and prior interactions, and **tools/actions** the model can invoke to actually *do* things. Without this layer you have a clever chatbot; with it you have a product.
+
+### Foundation layer
+
+The unglamorous platform that everything depends on: a **model gateway** that lets you route across models (and swap them as the frontier moves), **observability** for traces, evals, and cost, and **governance** for authorization, PII handling, and audit. Enterprises buy or reject products on this layer. Skimp on it and you'll fail security review no matter how good the demo was.
+
+### How a single request flows
+
+<Mermaid chart={requestDiagram} alt="A request flows from user intent through the orchestrator, which gathers permissions-aware context, calls the model, checks the output at a guardrail gate, and returns a result with provenance." />
+
+Notice what's *not* in that flow: the user picking a feature. They express intent; the orchestrator composes the capabilities. Notice also that the guardrail gate is non-optional and sits between the model and the user — in an enterprise, an unchecked model output reaching a customer is an incident waiting to happen.
+
+## Don't build the autonomous version first
+
+The single most common way AI-native products fail is overreaching — shipping autonomy before the evals and guardrails exist to make it safe. The way through is a maturity ladder, where each rung is unlocked by measurement, not optimism.
+
+<Mermaid chart={maturityDiagram} alt="A maturity ladder: crawl (assistive, human approves), walk (co-pilot, drafts and acts with review), run (AI-native, autonomous within guardrails)." />
+
+**Crawl — assistive.** The model suggests; the human always approves before anything happens. Low risk, immediate value, and — crucially — every approval/rejection is a labeled data point for your evals.
+
+**Walk — co-pilot.** The model drafts and can take reversible actions, with the human reviewing. You graduate to this rung *per capability*, only once its eval scores clear a bar you set in advance.
+
+**Run — AI-native.** The model acts autonomously within guardrails for capabilities where your evals show it's more reliable than the human baseline, with monitoring and the ability to roll back.
+
+<Callout type="warn">
+The rung you're on should be a per-capability decision backed by eval data, not a company-wide
+declaration. "We're an AI-native company" is a slogan; "this capability has a 98% eval pass
+rate over 2,000 cases, so it's autonomous, while that one is still assistive" is an
+architecture. Promote capabilities up the ladder individually, and be willing to demote one
+when its eval scores slip.
+</Callout>
+
+## Build vs buy, layer by layer
+
+You won't build all four layers from scratch, and you shouldn't. A rough heuristic:
+
+| Layer | Default | Rationale |
+|---|---|---|
+| Foundation (models) | **Buy** | Model gateways and hosted models are commodities; don't build a model. |
+| Foundation (governance/obs) | **Buy or adopt** | Mature tools exist; integrate rather than reinvent audit/PII. |
+| Knowledge & memory | **Mix** | Buy vector infra; build the retrieval logic specific to your data and permissions. |
+| Capability | **Build** | This is your product's differentiation — the orchestration and evals are yours. |
+| Experience | **Build** | The adaptive UX is where users feel the difference; own it. |
+
+The pattern: buy the undifferentiated foundation, build the capability and experience layers that are actually your product.
+
+## Trade-offs and honest costs
+
+AI-native is not free. The capability and foundation layers are real systems that need real engineering. You take on non-determinism (the same input can produce different outputs), latency (multi-step reasoning is slower than a CRUD read), cost (tokens add up), and a new failure mode (confidently wrong). For some products — especially ones where the workflow is genuinely fixed and well-understood — a few good bolt-on features are the right answer, and pretending otherwise is just fashion.
+
+The decision rule: go AI-native when the *core value* of the product is something the model uniquely enables (synthesis, judgment, open-ended action), and stay feature-oriented when the model is a convenience on top of a fundamentally deterministic workflow.
+
+## Pitfalls
+
+- **Chatbot-as-strategy** — bolting a chat panel on and calling it AI-native; the model has to be in the workflow, not beside it.
+- **Skipping the foundation** — shipping capabilities before governance and observability exist; you'll hit a wall at enterprise security review.
+- **All-or-nothing autonomy** — flipping the whole product to autonomous instead of promoting capabilities up the maturity ladder individually.
+- **No provenance in the UI** — hiding sources and reasoning, so users can't verify and don't trust the output.
+- **Model lock-in** — wiring one provider's SDK through your whole codebase instead of routing through a gateway; the frontier moves every few months.
+- **Ignoring the human-in-the-loop data** — every approval and correction is training/eval signal; throwing it away is throwing away your moat.
+
+## How to adopt this
+
+- [ ] Write down your product's core value and ask: does it survive removing the model? That tells you if AI-native is even the right call.
+- [ ] Sketch the four layers for your product; identify which you'll build vs buy.
+- [ ] Put a model gateway in front of every model call from day one (no direct SDK calls in app code).
+- [ ] Stand up observability (traces + cost) before shipping any capability.
+- [ ] Ship your first capability at the **assistive** rung; instrument every human approval as eval data.
+- [ ] Define, in advance, the eval bar a capability must clear to be promoted to co-pilot, then to autonomous.
+- [ ] Put a guardrail gate between every model output and the user; never let unchecked output reach a customer.
+
+## References
+
+This recipe is the architectural frame for the rest of the site. The capability layer is the [agent harness](/recipes/effective-agent-harness) at scale; the promotion gates depend on the [evaluation harness](/recipes/evaluation-harness-for-trust); and disciplined delivery of each capability uses [spec-driven development](/recipes/spec-driven-development). The reusable building blocks live in the [cookbook](https://github.com/mohitkmittal/applied-genai-cookbook).

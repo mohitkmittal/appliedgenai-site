@@ -2,6 +2,7 @@
 import Base from './Base.astro';
 import FormattedDate from '../components/FormattedDate.astro';
 import Mermaid from '../components/Mermaid.astro';
+import TOC from '../components/TOC.astro';
 
 interface Props {
   title: string;
@@ -18,31 +19,36 @@ interface Props {
   diagramAlt?: string;
   diagramImage?: string;
   code?: string;
+  headings?: { depth: number; slug: string; text: string }[];
+  prev?: { slug: string; title: string } | null;
+  next?: { slug: string; title: string } | null;
 }
 
 const {
   title, description, pubDate, updatedDate, author, authorUrl,
   difficulty, readingTime, tags, stack, diagram, diagramAlt, diagramImage, code,
+  headings = [], prev, next,
 } = Astro.props;
+const initials = author.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 ---
 
 <Base title={title} description={description}>
   <article class="recipe">
     <div class="meta">
       <h1>{title}</h1>
-      <p class="muted" style="font-size:1.05rem;">{description}</p>
+      <p class="lede">{description}</p>
 
-      <div class="byline sans">
+      <div class="byline">
         <span>By {authorUrl ? <a href={authorUrl}>{author}</a> : author}</span>
         <span>·</span>
         <FormattedDate date={pubDate} />
-        {updatedDate && <span class="muted"> · updated <FormattedDate date={updatedDate} /></span>}
+        {updatedDate && <span> · updated <FormattedDate date={updatedDate} /></span>}
         <span class={`pill pill-${difficulty}`}>{difficulty}</span>
-        {readingTime && <span class="muted">· {readingTime}</span>}
+        {readingTime && <span class="faint">{readingTime}</span>}
       </div>
 
       {stack.length > 0 && (
-        <p class="tags" style="margin-top:0.5rem;">
+        <p style="margin-top:.7rem;">
           {stack.map((s) => <span class="stack-chip">{s}</span>)}
         </p>
       )}
@@ -54,7 +60,7 @@ const {
 
       {code && (
         <div class="code-callout">
-          📦 <strong>Runnable code:</strong> <a href={code}>{code.replace('https://', '')}</a>
+          📦 <strong>Runnable code for this recipe:</strong> <a href={code}>{code.replace('https://github.com/', '')}</a>
         </div>
       )}
     </div>
@@ -62,44 +68,32 @@ const {
     {diagram && <Mermaid chart={diagram} alt={diagramAlt} />}
     {diagramImage && (
       <figure class="diagram">
-        <img src={diagramImage} alt={diagramAlt ?? title} style="max-width:100%;border-radius:8px;border:1px solid var(--color-border);" />
-        {diagramAlt && <figcaption class="muted sans" style="font-size:0.85rem;margin-top:0.5rem;text-align:center;">{diagramAlt}</figcaption>}
+        <img src={diagramImage} alt={diagramAlt ?? title} style="max-width:100%;border-radius:8px;" />
+        {diagramAlt && <figcaption>{diagramAlt}</figcaption>}
       </figure>
     )}
 
+    <TOC headings={headings} />
+
     <slot />
+
+    <div class="authorbox">
+      <div class="avatar">{initials}</div>
+      <div>
+        <div class="a-name">{author}</div>
+        <div class="a-bio">Writes Applied GenAI — practical recipes for building with generative AI. Code lives in the <a href="https://github.com/mohitkmittal/applied-genai-cookbook">cookbook</a>.</div>
+      </div>
+    </div>
+
+    {(prev || next) && (
+      <nav class="recipe-nav">
+        <span>{prev && <a href={`/recipes/${prev.slug}`}>← {prev.title}</a>}</span>
+        <span>{next && <a href={`/recipes/${next.slug}`}>{next.title} →</a>}</span>
+      </nav>
+    )}
   </article>
 </Base>
 
 <style>
-  .byline {
-    font-size: 0.9rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-top: 0.5rem;
-  }
-  .pill {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid var(--color-border);
-  }
-  .pill-beginner { color: #15803d; }
-  .pill-intermediate { color: #b45309; }
-  .pill-advanced { color: #b1361e; }
-  .stack-chip {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    background: var(--color-code-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    padding: 0.1rem 0.45rem;
-    margin-right: 0.35rem;
-    color: var(--color-muted);
-  }
+  .byline { align-items: center; }
 </style>

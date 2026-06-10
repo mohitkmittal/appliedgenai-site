@@ -4,20 +4,41 @@ import { COOKBOOK_URL } from '../consts';
 ---
 
 <Base title="About">
-  <h1>About</h1>
+  <h1>About Applied GenAI</h1>
+  <p class="lede">Practical, opinionated recipes for building real things with generative AI — less hype, more patterns that survive contact with production.</p>
+
   <p>
-    <strong>Applied GenAI</strong> is a collection of practical, opinionated recipes for
-    building real things with generative AI. Less hype, more patterns that hold up in
-    production: agent harnesses, spec-driven development, memory systems, and prompts that
-    don't fall over the moment they meet a real user.
+    There's no shortage of generative-AI content that's either breathless ("everything has
+    changed!") or abstract ("attention is all you need"). This site aims at the gap in the
+    middle: the concrete, hard-won patterns you actually need when you sit down to build —
+    how to make an agent reliable, how to keep a model honest about intent, how to give it
+    memory that doesn't rot, how to manage prompts like the assets they are.
+  </p>
+
+  <h2>What a recipe is</h2>
+  <p>
+    Every recipe follows the same fixed structure, on purpose. You'll always find the problem
+    it solves, the forces in tension, an architecture diagram, the steps, real code,
+    the trade-offs, the pitfalls, and a checklist to adopt it. The consistency is the point:
+    once you've read one, you know exactly where to look in all the others.
   </p>
   <p>
-    Every recipe is meant to be runnable. Where there's code, it lives in the companion
-    cookbook: <a href={COOKBOOK_URL}>applied-genai-cookbook</a>.
+    And every recipe is meant to be <em>runnable</em>. Where there's code, it lives in the
+    companion cookbook — a real, tested Python package you can clone and learn from:
+    <a href={COOKBOOK_URL}>applied-genai-cookbook</a>.
   </p>
+
   <h2>Who writes this</h2>
   <p>
-    Written by Mohit Mittal. <em>(Edit <code>src/pages/about.astro</code> to tell your
-    story — who you are, what you build, and how to reach you.)</em>
+    Written by Mohit Mittal. <em>(Edit <code>src/pages/about.astro</code> to tell your story —
+    what you build, what you've learned, and how to reach you. A short, specific bio does more
+    for credibility than a long one.)</em>
+  </p>
+
+  <h2>Follow along</h2>
+  <p>
+    New recipes show up in the <a href="/rss.xml">RSS feed</a>. The code is on
+    <a href={COOKBOOK_URL}>GitHub</a>. That's the whole operation — no newsletter funnel,
+    no popups, just recipes.
   </p>
 </Base>

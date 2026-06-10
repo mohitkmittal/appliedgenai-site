@@ -2,7 +2,6 @@
 import { getCollection } from 'astro:content';
 import Base from '../layouts/Base.astro';
 import FormattedDate from '../components/FormattedDate.astro';
-import { SITE_DESCRIPTION } from '../consts';
 
 const recipes = (await getCollection('recipes', ({ data }) => !data.draft)).sort(
   (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf()
@@ -10,22 +9,28 @@ const recipes = (await getCollection('recipes', ({ data }) => !data.draft)).sort
 ---
 
 <Base>
-  <section style="margin-bottom: 3rem;">
-    <h1>Applied GenAI</h1>
-    <p class="muted" style="font-size: 1.1rem;">{SITE_DESCRIPTION}</p>
+  <section class="hero">
+    <span class="eyebrow">Applied GenAI</span>
+    <h1>Recipes for building with generative AI.</h1>
+    <p>Practical, opinionated patterns that hold up in production — agent harnesses,
+       spec-driven development, memory, and prompts. Each one comes with a diagram and
+       runnable code.</p>
   </section>
 
-  <h2 class="sans" style="font-size:1rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--color-muted); border-bottom:1px solid var(--color-border); padding-bottom:0.5rem;">
-    Recipes
-  </h2>
-
-  <ul class="recipe-list">
+  <div class="section-label">All recipes</div>
+  <div class="card-grid">
     {recipes.map((r) => (
-      <li>
-        <h3><a href={`/recipes/${r.slug}`}>{r.data.title}</a></h3>
-        <p class="muted">{r.data.description}</p>
-        <FormattedDate date={r.data.pubDate} />
-      </li>
+      <a class="rcard" href={`/recipes/${r.slug}`}>
+        <h3>{r.data.title}</h3>
+        <p>{r.data.description}</p>
+        <div class="row">
+          <span class={`pill pill-${r.data.difficulty}`}>{r.data.difficulty}</span>
+          {r.data.readingTime && <span class="faint">{r.data.readingTime}</span>}
+          <span class="faint">·</span>
+          {r.data.tags.slice(0, 3).map((t) => <span class="faint">#{t}</span>)}
+          <span style="margin-left:auto"><FormattedDate date={r.data.pubDate} /></span>
+        </div>
+      </a>
     ))}
-  </ul>
+  </div>
 </Base>
