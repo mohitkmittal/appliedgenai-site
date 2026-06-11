@@ -1,5 +1,6 @@
 ---
-// Renders a Mermaid diagram. Pass the diagram source as `chart`.
+// Renders a Mermaid diagram with an on-brand, professional theme.
+// Pass the diagram source as `chart`.
 interface Props {
   chart: string;
   alt?: string;
@@ -13,28 +14,128 @@ const { chart, alt } = Astro.props;
 
 <script>
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const font = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+  const light = {
+    background: 'transparent',
+    primaryColor: '#ffffff',
+    mainBkg: '#ffffff',
+    primaryTextColor: '#1c1c1c',
+    primaryBorderColor: '#d9d3cc',
+    nodeBorder: '#c9c2b8',
+    lineColor: '#a59d92',
+    secondaryColor: '#f5e7e3',
+    tertiaryColor: '#faf8f5',
+    clusterBkg: '#faf8f5',
+    clusterBorder: '#e7e5e0',
+    titleColor: '#b1361e',
+    edgeLabelBackground: '#fcfcfa',
+    nodeTextColor: '#1c1c1c',
+    actorBkg: '#ffffff',
+    actorBorder: '#b1361e',
+    actorTextColor: '#1c1c1c',
+    actorLineColor: '#c9c2b8',
+    signalColor: '#6b7280',
+    signalTextColor: '#1c1c1c',
+    labelBoxBkgColor: '#f5e7e3',
+    labelBoxBorderColor: '#b1361e',
+    labelTextColor: '#1c1c1c',
+    loopTextColor: '#6b7280',
+    noteBkgColor: '#f5e7e3',
+    noteBorderColor: '#e0b7ab',
+    noteTextColor: '#1c1c1c',
+  };
+
+  const darkVars = {
+    background: 'transparent',
+    primaryColor: '#1a1d24',
+    mainBkg: '#1a1d24',
+    primaryTextColor: '#e9e8e4',
+    primaryBorderColor: '#39414e',
+    nodeBorder: '#444c5a',
+    lineColor: '#5b6472',
+    secondaryColor: '#2a1b16',
+    tertiaryColor: '#15171c',
+    clusterBkg: '#14181f',
+    clusterBorder: '#2a2e37',
+    titleColor: '#ff7a59',
+    edgeLabelBackground: '#0e0f12',
+    nodeTextColor: '#e9e8e4',
+    actorBkg: '#1a1d24',
+    actorBorder: '#ff7a59',
+    actorTextColor: '#e9e8e4',
+    actorLineColor: '#444c5a',
+    signalColor: '#9aa0aa',
+    signalTextColor: '#e9e8e4',
+    labelBoxBkgColor: '#2a1b16',
+    labelBoxBorderColor: '#ff7a59',
+    labelTextColor: '#e9e8e4',
+    loopTextColor: '#9aa0aa',
+    noteBkgColor: '#2a1b16',
+    noteBorderColor: '#5c3a2e',
+    noteTextColor: '#e9e8e4',
+  };
+
   mermaid.initialize({
     startOnLoad: true,
-    theme: dark ? 'dark' : 'neutral',
-    fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+    securityLevel: 'loose',
+    theme: 'base',
+    fontFamily: font,
+    themeVariables: { fontFamily: font, fontSize: '14px', ...(dark ? darkVars : light) },
+    flowchart: { curve: 'basis', htmlLabels: true, nodeSpacing: 48, rankSpacing: 56, padding: 14, useMaxWidth: true },
+    sequence: { useMaxWidth: true, actorMargin: 56, boxMargin: 12, mirrorActors: false, messageFontWeight: '500' },
   });
 </script>
 
 <style>
   figure.diagram {
-    margin: 2rem 0;
+    margin: 2.2rem 0;
     text-align: center;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 1.8rem 1.2rem 1.1rem;
+    box-shadow: var(--shadow-card);
   }
   figure.diagram pre.mermaid {
     background: transparent !important;
     border: none;
     padding: 0;
+    margin: 0;
     display: flex;
     justify-content: center;
+    min-height: 40px;
   }
+  figure.diagram :global(svg) { max-width: 100%; height: auto; }
+
+  /* rounded nodes + soft depth */
+  figure.diagram :global(.node rect),
+  figure.diagram :global(.node polygon),
+  figure.diagram :global(.cluster rect) { rx: 9px; ry: 9px; }
+  figure.diagram :global(.node rect),
+  figure.diagram :global(.node circle),
+  figure.diagram :global(.node polygon),
+  figure.diagram :global(.node path),
+  figure.diagram :global(.label-container) {
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.07));
+  }
+  figure.diagram :global(.nodeLabel),
+  figure.diagram :global(.actor) { font-weight: 600; }
+  figure.diagram :global(.edgeLabel) { font-size: 12px; }
+  figure.diagram :global(.cluster .nodeLabel),
+  figure.diagram :global(.cluster text) {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  figure.diagram :global(.flowchart-link) { stroke-width: 1.5px; }
+
   figure.diagram figcaption {
+    font-family: var(--font-sans);
     font-size: 0.85rem;
-    margin-top: 0.5rem;
+    color: var(--color-muted);
+    margin-top: 1rem;
   }
 </style>
